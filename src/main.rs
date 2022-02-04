@@ -1,76 +1,81 @@
+//#![windows_subsystem = "windows"]
+#![allow(clippy::many_single_char_names)]
+#![allow(clippy::manual_range_contains)]
+use fltk::{app, button::*, dialog::*, frame::*, group::*, input::*, text::*, window::*, prelude::*};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::io::prelude::*;
+use std::net::TcpStream;
+use std::path::Path;
+use ssh2::Session;
+use std::{thread, time};
+use std::sync::mpsc::channel;
 
 // Main
 fn main() {
-    let mut onerow: Vec<f64>;
-    let mut matrix: Vec<Vec<f64>> = Vec::new();
-    let mut ms: Vec<f64> = Vec::new();
+    // Initialize thread comms
+    let (tx1, rx) = channel();
 
+    // Initialize the GUI
+    let app_handle = app::App::default();
+    let mut wind = Window::new(100, 100, 700, 500, "Real Time Monitor v1.0");
+    let mut output = TextDisplay::new(10, 10, 680, 360, "");
+    let mut count =  IntInput::new(580, 440, 54, 22, "Count");
 
-    let filename = "test.txt";
+    // Text buffers for our inputs and output
+    let text = TextBuffer::default();
 
-    let file = File::open(filename).unwrap();
-    let reader = BufReader::new(file);
+    count.set_value("60");
 
-    // Populate the matrix
-    for (_index, line) in reader.lines().enumerate() {
-        let line = line.unwrap();
-        onerow = csv_split(&line);
-        matrix.push(onerow);
-    }
+    // Set output buffer
+    output.set_buffer(Some(text));
 
-    for r in &matrix {
-        for &t in r{
-            print!("{} ",science_pretty_format(t, 3));
+    let tx2 = tx1.clone();
+    let tx3 = tx1.clone();
+
+    // Start button
+    let mut start_button = Button::new(180, 420, 200, 57, "Start");
+    start_button.set_callback(move |_| tx1.send(1).unwrap());
+
+    // Stop button
+    let mut stop_button = Button::new(400, 420, 100, 57, "Stop");
+    stop_button.set_callback(move |_| tx2.send(2).unwrap());
+
+     // Show the window
+     wind.end();
+     wind.show();
+
+     // Spawn a new timer thread, and move the receiving end into the thread.
+    thread::spawn(move || {
+        // Send every 10 seconds
+        loop {
+            let _= tx3.send(3);
+            thread::sleep(time::Duration::from_secs(5));
         }
-        ms.push(r[8]);
+    });
 
-        println!();
-    }
+    // Spawn a new thread to handle button controls
+    thread::spawn(move || {
+        // Keep receiving in a loop, until tx is dropped!
+        let mut running = false;
+        while let Ok(n) = rx.recv() { // Note: `recv()` always blocks
+            match n {
+                1=> {output.buffer().unwrap().set_text("Running True");running = true;},
+                2=> {output.buffer().unwrap().set_text("Running False");running = false;},
+                3=> {
+                        if running == true {
+                            output.buffer().unwrap().set_text("I am running!");
+                        } else {
+                            output.buffer().unwrap().set_text("I am NOT running!");
+                        };
+                    },
+                _=> break,
+            }
+        }
+    });
 
-    let m = mean(&ms);
-    println!("Mean:{} SD: {}", science_pretty_format(m, 3), science_pretty_format(sd_sample(&ms, &m), 3));
-}
-
-// Calculate mean
-fn mean(vec: &[f64]) -> f64 {
-    let sum: f64 = Iterator::sum(vec.iter());
-    sum / vec.len() as f64
-}
-
-// Calculate SD of a sample
-fn sd_sample(x: &[f64], mean: &f64) -> f64 {
-    let mut sd: f64 = 0.0;
-
-    for v in x.iter() {
-        sd += (v - mean).powf(2.0);
-    }
-    (sd / (x.len() - 1) as f64).sqrt()
-}
-
-// Calculate SD of a sample
-fn sd_pop(x: &[f64], mean: &f64) -> f64 {
-    let mut sd: f64 = 0.0;
-
-    for v in x.iter() {
-        sd += (v - mean).powf(2.0);
-    }
-    (sd / x.len() as f64).sqrt()
-}
-
-// Pretty Format Scientific Numbers
-fn science_pretty_format(value: f64, digits: usize) -> String {
-    if value.abs() == 0.0 {
-        "0".to_string();
-    }
-    if value.abs() >= 10000.0 || value.abs() < 0.001 {
-        format!("{:.*e}", digits, value);
-    }
-    format!("{:.*}", digits, value)
-        .trim_end_matches(|c| c == '0')
-        .trim_end_matches(|c| c == '.')
-        .to_string()
+    // Enter main loop
+    app_handle.run().unwrap();
 }
 
 // Convert CSV from the main windows to arrays of floats, also clean up stray whitespace
