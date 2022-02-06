@@ -23,11 +23,13 @@ fn main() {
     let mut wind = Window::new(100, 100, 700, 500, "Real Time Monitor v1.0");
     let mut output = TextDisplay::new(10, 10, 680, 360, "");
     let mut count = IntInput::new(580, 440, 54, 22, "Count");
+    let mut status = Frame::new(10, 440, 110, 17, "Status: Stopped");
 
     // Text buffers for our inputs and output
     let text = TextBuffer::default();
     output.set_buffer(Some(text));
 
+    // Prefill the record count
     count.set_value("60");
 
     let tx2 = tx1.clone();
@@ -56,12 +58,20 @@ fn main() {
 
     // Spawn a new thread to handle button controls
     thread::spawn(move || {
-        // Keep receiving in a loop, until tx is dropped!
+        // Make sure we are not in running mode on startup
         let mut running = false;
+
+        // Wait for messages from the channel
         while let Ok(n) = rx.recv() {
             match n {
-                1 => running = true,
-                2 => running = false,
+                1 => {
+                    running = true;
+                    status.set_label("Status: Running");
+                }
+                2 => {
+                    running = false;
+                    status.set_label("Status: Stopped");
+                }
                 3 => {
                     // If running then grab data and process it
                     if running {
@@ -75,7 +85,10 @@ fn main() {
                         // Send command to truncate to last 60 records
                         let mut channel = sess.channel_session().unwrap();
                         channel
-                            .exec("tail -n 60 realtime.csv > lastminute.csv")
+                            .exec(&format!(
+                                "tail -n {} realtime.csv > lastminute.csv",
+                                count.value()
+                            ))
                             .unwrap();
                         let _ = channel.wait_close();
 
@@ -95,9 +108,12 @@ fn main() {
 
                         // Show it in the window
                         output.buffer().unwrap().set_text(&format!("{}", &s));
+
+                        // Run the event loop on the main thread to refresh the screen
+                        app::awake(); 
                     }
                 }
-                _ => break,
+                _ =>{}, // Don't do anything if an invalid number is received on the channel
             }
         }
     });
