@@ -2,7 +2,7 @@
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::manual_range_contains)]
 use fltk::{
-    app, button::*, dialog::*, frame::*, group::*, input::*, prelude::*, text::*, window::*,
+    app, button::*, dialog::*, frame::*, group::*, input::*, prelude::*, text::*, window::*, enums::*,
 };
 use ssh2::Session;
 use std::fs::File;
@@ -22,27 +22,32 @@ fn main() {
 
     // Initialize the GUI
     let app_handle = app::App::default();
-    let mut wind = Window::new(100, 100, 700, 500, "Real Time Monitor v1.0");
-    let mut output = TextDisplay::new(10, 10, 680, 360, "");
-    let mut count = IntInput::new(580, 440, 54, 22, "Count");
-    let mut status = Frame::new(10, 440, 110, 17, "Status: Stopped");
+    let mut wind = Window::new(100, 100, 800, 750, "Real Time Monitor v1.0");
+    let mut output = TextDisplay::new(10, 10, 780, 610, "");
+    let mut count = IntInput::new(600, 690, 54, 22, "Count");
+    let mut zs = FloatInput::new(600, 660, 54, 22, "ZScore Thresh");
+    let mut status = Frame::new(10, 690, 110, 17, "Status: Stopped");
 
     // Text buffers for our inputs and output
     let text = TextBuffer::default();
     output.set_buffer(Some(text));
 
-    // Prefill the record count
+    // Prefill the fields
     count.set_value("60");
+    zs.set_value("3.0");
+
+    // Set Font
+    output.set_text_font(Font::Screen);
 
     let tx2 = tx1.clone();
     let tx3 = tx1.clone();
 
     // Start button
-    let mut start_button = Button::new(180, 420, 200, 57, "Start");
+    let mut start_button = Button::new(180, 670, 200, 57, "Start");
     start_button.set_callback(move |_| tx1.send(1).unwrap()); // 1 = Start
 
     // Stop button
-    let mut stop_button = Button::new(400, 420, 100, 57, "Stop");
+    let mut stop_button = Button::new(400, 670, 100, 57, "Stop");
     stop_button.set_callback(move |_| tx2.send(2).unwrap()); // 2 = Stop
 
     // Show the window
@@ -109,7 +114,7 @@ fn main() {
                         let s = String::from_utf8(contents).unwrap();
 
                         // Show it in the window
-                        output.buffer().unwrap().set_text(&format!("{}", &s));
+                        output.buffer().unwrap().set_text(&format!("{}", process_data(&s,zs.value())));
 
                         // Run the event loop on the main thread to refresh the screen
                         app::awake(); 
@@ -124,12 +129,155 @@ fn main() {
     app_handle.run().unwrap();
 }
 
+//rec#,timestamp,touch,flame,metal,motion,ir,visible,uv,distance,events,temperature,humidity,barometer,dewpoint,emf,ion,plasma,rad/cps,accelX,accelY,accelZ,accelSum,gyroX,gyroY,gyroZ,gyroSum,magX,magY,magZ,magSum
+
+// Process data
+fn process_data (ins: &String, zs: String) -> String {
+    let mut output: String = String::new();
+    let mut matrix: Vec<Vec<f64>> = Vec::new();
+    let mut column: Vec<f64> = Vec::new();
+
+    // Populate the matrix
+    let lines: Vec<String> = newline_split(&ins);
+    for s in lines {
+        let onerow = csv_split(&s);
+        matrix.push(onerow);
+    }
+
+    //output.push_str(&format!("{:?}", matrix[0]));
+
+    // Process Touch
+    let mut c = false;
+    for v in &matrix {
+        if v[1] > 0.0 {
+            c = true;
+        }
+    }
+    output.push_str(&format!("Touch:       {}\n\n", c));
+
+    // Process Flame
+    let mut c = false;
+    for v in &matrix {
+        if v[2] > 0.0 {
+            c = true;
+        }
+    }
+    output.push_str(&format!("Flame:       {}\n\n", c));
+
+    // Process Metal
+    let mut c = false;
+    for v in &matrix {
+        if v[3] > 0.0 {
+            c = true;
+        }
+    }
+    output.push_str(&format!("Metal:       {}\n\n", c));
+
+    // Process Motion
+    let mut c = false;
+    for v in &matrix {
+        if v[4] > 0.0 {
+            c = true;
+        }
+    }
+    output.push_str(&format!("Motion:      {}\n\n", c));
+
+
+    // Process IR
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[5]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!("IR           Mean:{}  ", &science_pretty_format(&m,3)));
+    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms),3)));
+    output.push_str(&format!("SD:{}  ", &science_pretty_format(&sd_pop(&ms,&m),3)));
+    let (min,max) = min_max(&ms);
+    output.push_str(&format!("Min:{}  Max:{}  ", &science_pretty_format(&min,3), &science_pretty_format(&max,3)));
+    output.push_str(&format!("ZC:{}\n\n", cnt_zscore(&zscore(&ms),&zs.parse::<f64>().unwrap())));
+
+    // Process Visible
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[6]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!("Visible      Mean:{}  ", &science_pretty_format(&m,3)));
+    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms),3)));
+    output.push_str(&format!("SD:{}  ", &science_pretty_format(&sd_pop(&ms,&m),3)));
+    let (min,max) = min_max(&ms);
+    output.push_str(&format!("Min:{} Max:{}  ", &science_pretty_format(&min,3), &science_pretty_format(&max,3)));
+    output.push_str(&format!("ZC:{}\n\n", cnt_zscore(&zscore(&ms),&zs.parse::<f64>().unwrap())));
+
+    // Process UV
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[7]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!("UV           Mean:{}  ", &science_pretty_format(&m,3)));
+    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms),3)));
+    output.push_str(&format!("SD:{}  ", &science_pretty_format(&sd_pop(&ms,&m),3)));
+    let (min,max) = min_max(&ms);
+    output.push_str(&format!("Min:{}  Max:{}  ", &science_pretty_format(&min,3), &science_pretty_format(&max,3)));
+    output.push_str(&format!("ZC:{}\n\n", cnt_zscore(&zscore(&ms),&zs.parse::<f64>().unwrap())));
+
+    // Process Distance
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[8]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!("Distance     Mean:{}  ", &science_pretty_format(&m,3)));
+    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms),3)));
+    output.push_str(&format!("SD:{}  ", &science_pretty_format(&sd_pop(&ms,&m),3)));
+    let (min,max) = min_max(&ms);
+    output.push_str(&format!("Min:{}  Max:{}  ", &science_pretty_format(&min,3), &science_pretty_format(&max,3)));
+    output.push_str(&format!("ZC:{}\n\n", cnt_zscore(&zscore(&ms),&zs.parse::<f64>().unwrap())));
+
+    // Process Events
+    let mut status: String = String::new();
+
+    // Process Distance
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[9]);
+    }
+
+    let (_,max) = min_max(&ms);
+
+    match max as i32 {
+        0 => status = "None".to_string(),
+        1 => status = "Session".to_string(),
+        2 => status = "Button".to_string(),
+        3 => status = "Session + Button".to_string(),
+        _ => status = "Error".to_string(),
+    }
+
+    output.push_str(&format!("Events:      {}\n\n", status));
+
+    output 
+}
+
 // Calculate median
 fn median(vec: &[f64]) -> f64 {
     let mut v = vec.to_owned();
 
     v.sort_by(cmp_f64);
     v[vec.len() / 2]
+}
+
+// Calculate min, max
+fn min_max(vec: &[f64]) -> (f64,f64) {
+    let mut v = vec.to_owned();
+
+    v.sort_by(cmp_f64);
+
+    (v[0],v[v.len()-1])
 }
 
 // Calculate Percent difference
@@ -152,6 +300,17 @@ fn zscore(vec: &[f64]) -> Vec<f64> {
     output
 }
 
+// Count number of Z Scores > threshhold
+fn cnt_zscore (zs: &[f64], t: &f64) -> i32 {
+    let mut c = 0;
+    for z in zs {
+        if z > t {
+            c += 1;
+        };
+    };
+    c
+}
+
 // Comparison function for vec<64> sorting
 fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     if a.is_nan() {
@@ -167,8 +326,6 @@ fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     }
     Ordering::Equal
 }
-
-
 
 // Calculate mean
 fn mean(vec: &[f64]) -> f64 {
@@ -197,7 +354,7 @@ fn sd_pop(x: &[f64], mean: &f64) -> f64 {
 }
 
 // Pretty Format Scientific Numbers
-fn science_pretty_format(value: f64, digits: usize) -> String {
+fn science_pretty_format(value: &f64, digits: usize) -> String {
     if value.abs() == 0.0 {
         "0".to_string();
     }
@@ -230,4 +387,19 @@ fn csv_split(inp: &str) -> Vec<f64> {
     }
 
     values
+}
+
+// Convert CSV from the main windows to arrays of floats, also clean up stray whitespace
+fn newline_split(inp: &String) -> Vec<String> {
+    let mut rows: Vec<String> = Vec::new();
+
+    let r = inp.split('\n');
+
+    for row in r {
+        if row.len() > 0 {
+            rows.push(row.to_string());
+        }
+    };
+
+    rows
 }
