@@ -12,6 +12,8 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::mpsc::channel;
 use std::{thread, time};
+use std::cmp::Ordering;
+use std::f64;
 
 // Main
 fn main() {
@@ -121,6 +123,52 @@ fn main() {
     // Enter main loop
     app_handle.run().unwrap();
 }
+
+// Calculate median
+fn median(vec: &[f64]) -> f64 {
+    let mut v = vec.to_owned();
+
+    v.sort_by(cmp_f64);
+    v[vec.len() / 2]
+}
+
+// Calculate Percent difference
+fn per_change (f: &f64, s: &f64) -> f64 {
+    (s - f) / f.abs() * 100.0
+}
+
+// Calculate ZScore
+fn zscore(vec: &[f64]) -> Vec<f64> {
+    let mut v = vec.to_owned();
+    let mut output: Vec<f64> = Vec::new();
+
+    let avg = mean(&v);
+    let sd = sd_pop(&v,&avg);
+
+    for val in v{
+        output.push((val - avg) / sd);
+    };
+
+    output
+}
+
+// Comparison function for vec<64> sorting
+fn cmp_f64(a: &f64, b: &f64) -> Ordering {
+    if a.is_nan() {
+        return Ordering::Greater;
+    }
+    if b.is_nan() {
+        return Ordering::Less;
+    }
+    if a < b {
+        return Ordering::Less;
+    } else if a > b {
+        return Ordering::Greater;
+    }
+    Ordering::Equal
+}
+
+
 
 // Calculate mean
 fn mean(vec: &[f64]) -> f64 {
