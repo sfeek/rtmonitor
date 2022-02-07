@@ -655,7 +655,7 @@ fn zscore(vec: &[f64]) -> Vec<f64> {
 fn cnt_zscore(zs: &[f64], t: &f64) -> i32 {
     let mut c = 0;
     for z in zs {
-        if z > t {
+        if z >= t {
             c += 1;
         };
     }
