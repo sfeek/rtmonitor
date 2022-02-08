@@ -1,4 +1,4 @@
-//#![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::manual_range_contains)]
 #![allow(dead_code)]
@@ -32,7 +32,7 @@ fn main() {
     output.set_buffer(Some(text));
 
     // Prefill the fields
-    zs.set_value("3.0");
+    zs.set_value("4.0");
     ip.set_value("10.168.0.6");
 
     // Set Font
@@ -58,7 +58,7 @@ fn main() {
         // Send every 10 seconds
         loop {
             let _ = tx3.send(3); // 3 = read from device
-            thread::sleep(time::Duration::from_secs(10));
+            thread::sleep(time::Duration::from_secs(5));
         }
     });
 
@@ -81,27 +81,53 @@ fn main() {
                 3 => {
                     // If running then grab data and process it
                     if running {
-                        // Connect to the local SSH server
-                        let tcp = match TcpStream::connect(&ip.value().to_string()) {
-                            Ok(tcp) => {
-                                status.set_label("Status: Running");
-                                tcp
-                            }
+                        // Connect to the RPi SSH server
+                        let tcp = match TcpStream::connect(&format!("{}:22", &ip.value())) {
+                            Ok(tcp) => tcp,
                             Err(_) => {
-                                status.set_label("Status: Cannot Connect");
+                                status.set_label("Status: Fail Connect");
+                                app::awake();
                                 continue;
                             }
                         };
 
-                        let mut sess = Session::new().unwrap();
+                        let mut sess = match Session::new() {
+                            Ok(sess) => sess,
+                            Err(_) => {
+                                status.set_label("Status: Fail Connect");
+                                app::awake();
+                                continue;
+                            }
+                        };
+
                         sess.set_tcp_stream(tcp);
-                        sess.handshake().unwrap();
-                        sess.userauth_password("pi", &pass.value()).unwrap();
+
+                        match sess.handshake() {
+                            Ok(_) => {
+                                status.set_label("Status: Running");
+                            }
+                            Err(_) => {
+                                status.set_label("Status: Fail Handshake");
+                                app::awake();
+                                continue;
+                            }
+                        }
+
+                        match sess.userauth_password("pi", &pass.value()) {
+                            Ok(_) => {
+                                status.set_label("Status: Running");
+                            }
+                            Err(_) => {
+                                status.set_label("Status: Fail Password");
+                                app::awake();
+                                continue;
+                            }
+                        };
 
                         // Send command to truncate to last n records
                         let mut channel = sess.channel_session().unwrap();
                         channel
-                            .exec("tail -n 60 realtime.csv > lastminute.csv")
+                            .exec("tail -n 15 realtime.csv > lastminute.csv")
                             .unwrap();
                         let _ = channel.wait_close();
 
@@ -188,114 +214,6 @@ fn process_data(ins: &str, zs: String) -> String {
     }
     output.push_str(&format!("Motion:      {}\n\n", c));
 
-    // Process IR
-    let mut ms: Vec<f64> = Vec::new();
-    for v in &matrix {
-        ms.push(v[5]);
-    }
-
-    let m = mean(&ms);
-    output.push_str(&format!(
-        "IR           Mean:{}  ",
-        &science_pretty_format(&m, 3)
-    ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
-    output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
-    ));
-    let (min, max) = min_max(&ms);
-    output.push_str(&format!(
-        "Min:{}  Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
-    ));
-    output.push_str(&format!(
-        "ZC:{}\n\n",
-        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
-    ));
-
-    // Process Visible
-    let mut ms: Vec<f64> = Vec::new();
-    for v in &matrix {
-        ms.push(v[6]);
-    }
-
-    let m = mean(&ms);
-    output.push_str(&format!(
-        "Visible      Mean:{}  ",
-        &science_pretty_format(&m, 3)
-    ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
-    output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
-    ));
-    let (min, max) = min_max(&ms);
-    output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
-    ));
-    output.push_str(&format!(
-        "ZC:{}\n\n",
-        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
-    ));
-
-    // Process UV
-    let mut ms: Vec<f64> = Vec::new();
-    for v in &matrix {
-        ms.push(v[7]);
-    }
-
-    let m = mean(&ms);
-    output.push_str(&format!(
-        "UV           Mean:{}  ",
-        &science_pretty_format(&m, 3)
-    ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
-    output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
-    ));
-    let (min, max) = min_max(&ms);
-    output.push_str(&format!(
-        "Min:{}  Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
-    ));
-    output.push_str(&format!(
-        "ZC:{}\n\n",
-        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
-    ));
-
-    // Process Distance
-    let mut ms: Vec<f64> = Vec::new();
-    for v in &matrix {
-        ms.push(v[8]);
-    }
-
-    let m = mean(&ms);
-    output.push_str(&format!(
-        "Distance     Mean:{}  ",
-        &science_pretty_format(&m, 3)
-    ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
-    output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
-    ));
-    let (min, max) = min_max(&ms);
-    output.push_str(&format!(
-        "Min:{}  Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
-    ));
-    output.push_str(&format!(
-        "ZC:{}\n\n",
-        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
-    ));
-
     // Process Events
     let status: String;
 
@@ -314,6 +232,129 @@ fn process_data(ins: &str, zs: String) -> String {
 
     output.push_str(&format!("Events:      {}\n\n", status));
 
+    // Process IR
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[5]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!(
+        "IR           Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
+    ));
+    output.push_str(&format!(
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
+    ));
+    let (min, max) = min_max(&ms);
+    output.push_str(&format!(
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
+    ));
+    output.push_str(&format!(
+        "ZCount:{}\n\n",
+        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
+    ));
+
+    // Process Visible
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[6]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!(
+        "Visible      Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
+    ));
+    output.push_str(&format!(
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
+    ));
+    let (min, max) = min_max(&ms);
+    output.push_str(&format!(
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
+    ));
+    output.push_str(&format!(
+        "ZCount:{}\n\n",
+        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
+    ));
+
+
+    // Process UV
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[7]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!(
+        "UV           Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
+    ));
+    output.push_str(&format!(
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
+    ));
+    let (min, max) = min_max(&ms);
+    output.push_str(&format!(
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
+    ));
+    output.push_str(&format!(
+        "ZCount:{}\n\n",
+        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
+    ));
+
+
+    // Process Distance
+    let mut ms: Vec<f64> = Vec::new();
+    for v in &matrix {
+        ms.push(v[8]);
+    }
+
+    let m = mean(&ms);
+    output.push_str(&format!(
+        "Distance     Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
+    ));
+    output.push_str(&format!(
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
+    ));
+    let (min, max) = min_max(&ms);
+    output.push_str(&format!(
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
+    ));
+    output.push_str(&format!(
+        "ZCount:{}\n\n",
+        cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
+    ));
+
+
     // Process Temperature
     let mut ms: Vec<f64> = Vec::new();
     for v in &matrix {
@@ -322,24 +363,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Temp         Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Temp         Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process Humidity
     let mut ms: Vec<f64> = Vec::new();
@@ -349,22 +394,25 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Humidity     Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Humidity     Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
 
@@ -376,24 +424,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Barometer    Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Barometer    Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process Dew Point
     let mut ms: Vec<f64> = Vec::new();
@@ -403,24 +455,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Dew Point    Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Dew Point    Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process EMF
     let mut ms: Vec<f64> = Vec::new();
@@ -430,24 +486,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "EMF          Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "EMF          Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process Ions
     let mut ms: Vec<f64> = Vec::new();
@@ -457,24 +517,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Ions         Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Ions         Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process Plasma
     let mut ms: Vec<f64> = Vec::new();
@@ -484,22 +548,25 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Plasma       Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Plasma       Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
 
@@ -511,24 +578,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Radiation    Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Radiation    Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process Acceleration
     let mut ms: Vec<f64> = Vec::new();
@@ -538,24 +609,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Acceleration Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Acceleration Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process Gyro
     let mut ms: Vec<f64> = Vec::new();
@@ -565,24 +640,28 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "Gyro         Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "Gyro         Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
+
 
     // Process GMF
     let mut ms: Vec<f64> = Vec::new();
@@ -592,26 +671,49 @@ fn process_data(ins: &str, zs: String) -> String {
 
     let m = mean(&ms);
     output.push_str(&format!(
-        "GMF          Mean:{}  ",
-        &science_pretty_format(&m, 3)
+        "GMF          Mean:{}",
+        &add_spaces(&science_pretty_format(&m, 3),10)
     ));
-    output.push_str(&format!("MD:{}  ", &science_pretty_format(&median(&ms), 3)));
     output.push_str(&format!(
-        "SD:{}  ",
-        &science_pretty_format(&sd_pop(&ms, &m), 3)
+        "Median:{}",
+        &add_spaces(&science_pretty_format(&median(&ms), 3),10)
+    ));
+    output.push_str(&format!(
+        "SD:{}",
+        &add_spaces(&science_pretty_format(&sd_pop(&ms, &m), 3),10)
     ));
     let (min, max) = min_max(&ms);
     output.push_str(&format!(
-        "Min:{} Max:{}  ",
-        &science_pretty_format(&min, 3),
-        &science_pretty_format(&max, 3)
+        "Min:{}Max:{}",
+        &add_spaces(&science_pretty_format(&min, 3),10),
+        &add_spaces(&science_pretty_format(&max, 3),10)
     ));
     output.push_str(&format!(
-        "ZC:{}\n\n",
+        "ZCount:{}\n\n",
         cnt_zscore(&zscore(&ms), &zs.parse::<f64>().unwrap())
     ));
 
     output
+}
+
+
+// Add Spaces to pad numbers
+fn add_spaces(inp: &String, w: usize) -> String {
+    let s = inp.clone();
+    let l = s.len();
+    if l >= w {
+        return s;
+    }
+
+    let mut output: String = String::new();
+
+    output.push_str(&s);
+
+    for _ in 0..(w - l) {
+        output.push_str(" ");
+    }
+
+    return output;
 }
 
 // Calculate median
@@ -655,7 +757,7 @@ fn zscore(vec: &[f64]) -> Vec<f64> {
 fn cnt_zscore(zs: &[f64], t: &f64) -> i32 {
     let mut c = 0;
     for z in zs {
-        if z >= t {
+        if z.abs() >= *t {
             c += 1;
         };
     }
