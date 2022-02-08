@@ -131,7 +131,7 @@ fn main() {
                         // Send command to truncate to last n records
                         let mut channel = sess.channel_session().unwrap();
                         channel
-                            .exec("tail -n 15 realtime.csv > lastminute.csv")
+                            .exec("tail -n 60 realtime.csv > lastminute.csv")
                             .unwrap();
                         let _ = channel.wait_close();
 
